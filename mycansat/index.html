@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CanSat Ground Station</title>
+    
+    <!-- Leaflet Map CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg: #0b1220;
+            --panel: #131c30;
+            --card: #1b2740;
+            --ink: #e8eefc;
+            --muted: #94a3c7;
+            --good: #36c98e;
+            --warn: #ffcc66;
+            --bad: #ff6b6b;
+            --accent: #3aa0ff;
+            --radius-lg: 20px;
+            --radius-sm: 10px;
+            --gap-lg: 24px;
+            --gap-sm: 12px;
+            --font: 'Prompt', ui-sans-serif, system-ui, -apple-system, sans-serif;
+        }
+
+        * { 
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--ink);
+            font-family: var(--font);
+            line-height: 1.45;
+            padding: 16px;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header-card {
+            background: radial-gradient(circle at 0% 0%, rgba(58,160,255,0.25) 0%, rgba(27,39,64,0) 60%), var(--card);
+            border-radius: var(--radius-lg);
+            padding: var(--gap-lg);
+            margin-bottom: var(--gap-lg);
+            box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: var(--gap-sm);
+            margin-bottom: 16px;
+        }
+
+        .title-block h1 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: var(--ink);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 4px;
+        }
+
+        .title-block h1 .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--good);
+            box-shadow: 0 0 10px var(--good), 0 0 30px var(--good);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .title-block .sub {
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        .status-info {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .info-item {
+            text-align: right;
+        }
+
+        .info-label {
+            color: var(--muted);
+            font-size: 0.7rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-size: 1rem;
+            color: var(--ink);
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .status-chip {
+            background: rgba(54,201,142,0.1);
+            color: var(--good);
+            border: 1px solid rgba(54,201,142,0.4);
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            display: inline-block;
+        }
+
+        .status-chip.disconnected {
+            background: rgba(255,107,107,0.08);
+            border: 1px solid rgba(255,107,107,0.4);
+            color: var(--bad);
+        }
+
+        /* Main Grid Layout */
+        .main-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: var(--gap-lg);
+            margin-bottom: var(--gap-lg);
+        }
+
+        /* Map Section */
+        .map-section {
+            grid-column: 1 / -1;
+            background-color: var(--panel);
+            border-radius: var(--radius-lg);
+            padding: var(--gap-lg);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+            border: 1px solid rgba(255,255,255,0.05);
+            height: 450px;
+        }
+
+        .section-title {
+            color: var(--ink);
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #map {
+            width: 100%;
+            height: calc(100% - 40px);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* Sensor Cards */
+        .sensor-card {
+            background-color: var(--panel);
+            border-radius: var(--radius-lg);
+            padding: var(--gap-lg);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .sensor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .sensor-icon {
+            font-size: 1.8rem;
+        }
+
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 16px;
+        }
+
+        .data-item {
+            background: rgba(255,255,255,0.02);
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .data-label {
+            color: var(--muted);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }
+
+        .data-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--ink);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .data-unit {
+            font-size: 0.85rem;
+            color: var(--muted);
+            margin-left: 4px;
+        }
+
+        /* Chart Section */
+        .chart-section {
+            grid-column: 1 / -1;
+            background-color: var(--panel);
+            border-radius: var(--radius-lg);
+            padding: var(--gap-lg);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 16px;
+        }
+
+        /* Control Panel */
+        .control-panel {
+            grid-column: 1 / -1;
+            background-color: var(--panel);
+            border-radius: var(--radius-lg);
+            padding: var(--gap-lg);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .btn {
+            background: rgba(58,160,255,0.1);
+            color: var(--accent);
+            border: 1px solid rgba(58,160,255,0.4);
+            padding: 12px 24px;
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font);
+        }
+
+        .btn:hover {
+            background: rgba(58,160,255,0.2);
+            border-color: var(--accent);
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn.danger {
+            background: rgba(255,107,107,0.08);
+            color: var(--bad);
+            border: 1px solid rgba(255,107,107,0.4);
+        }
+
+        .btn.danger:hover {
+            background: rgba(255,107,107,0.15);
+        }
+
+        /* Log Section */
+        .log-box {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 12px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-top: 16px;
+        }
+
+        .log-box::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .log-box::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.2);
+            border-radius: 4px;
+        }
+
+        .log-box::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+        }
+
+        /* Flight Status Indicators */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .status-item {
+            background: rgba(255,255,255,0.02);
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-label {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        .status-indicator {
+            font-size: 1.2rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header-top {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .status-info {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .info-item {
+                text-align: left;
+            }
+
+            .map-section {
+                height: 300px;
+            }
+
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-card">
+            <div class="header-top">
+                <div class="title-block">
+                    <h1>
+                        <span class="dot" id="connectionDot"></span>
+                        CanSat Ground Station
+                    </h1>
+                    <div class="sub">Real-time Telemetry System</div>
+                </div>
+                
+                <div class="status-info">
+                    <div class="info-item">
+                        <div class="info-label">Runtime</div>
+                        <div class="info-value" id="runtime">0 s</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Position</div>
+                        <div class="info-value" id="positionCount">0</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Last Update</div>
+                        <div class="info-value" id="lastUpdate">--:--:--</div>
+                    </div>
+                    <div class="info-item">
+                        <span class="status-chip disconnected" id="connectionStatus">DISCONNECTED</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Map Section -->
+        <div class="main-grid">
+            <div class="map-section">
+                <div class="section-title">
+                    🗺️ GPS Tracking
+                    <span style="margin-left: auto; font-size: 0.85rem; color: var(--muted);">
+                        Lat: <span id="currentLat">0.000000</span> | Lon: <span id="currentLon">0.000000</span>
+                    </span>
+                </div>
+                <div id="map"></div>
+            </div>
+        </div>
+
+        <!-- Sensor Cards Grid -->
+        <div class="main-grid">
+            <!-- BMP280 Card -->
+            <div class="sensor-card">
+                <div class="sensor-header">
+                    <div class="section-title">
+                        <span class="sensor-icon">🌡️</span>
+                        BMP280
+                    </div>
+                </div>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <div class="data-label">Temperature</div>
+                        <div class="data-value">
+                            <span id="temp">0.00</span>
+                            <span class="data-unit">°C</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Pressure</div>
+                        <div class="data-value">
+                            <span id="pressure">0.00</span>
+                            <span class="data-unit">hPa</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Altitude</div>
+                        <div class="data-value">
+                            <span id="bmpAlt">0.00</span>
+                            <span class="data-unit">m</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPS Card -->
+            <div class="sensor-card">
+                <div class="sensor-header">
+                    <div class="section-title">
+                        <span class="sensor-icon">🛰️</span>
+                        GPS
+                    </div>
+                </div>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <div class="data-label">Latitude</div>
+                        <div class="data-value" style="font-size: 1.1rem;">
+                            <span id="gpsLat">0.000000</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Longitude</div>
+                        <div class="data-value" style="font-size: 1.1rem;">
+                            <span id="gpsLon">0.000000</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Altitude</div>
+                        <div class="data-value">
+                            <span id="gpsAlt">0.00</span>
+                            <span class="data-unit">m</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gyroscope Card -->
+            <div class="sensor-card">
+                <div class="sensor-header">
+                    <div class="section-title">
+                        <span class="sensor-icon">🌀</span>
+                        Gyroscope
+                    </div>
+                </div>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <div class="data-label">X Axis</div>
+                        <div class="data-value">
+                            <span id="gx">0.00</span>
+                            <span class="data-unit">°/s</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Y Axis</div>
+                        <div class="data-value">
+                            <span id="gy">0.00</span>
+                            <span class="data-unit">°/s</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Z Axis</div>
+                        <div class="data-value">
+                            <span id="gz">0.00</span>
+                            <span class="data-unit">°/s</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Accelerometer Card -->
+            <div class="sensor-card">
+                <div class="sensor-header">
+                    <div class="section-title">
+                        <span class="sensor-icon">📊</span>
+                        Accelerometer
+                    </div>
+                </div>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <div class="data-label">X Axis</div>
+                        <div class="data-value">
+                            <span id="ax">0.00</span>
+                            <span class="data-unit">g</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Y Axis</div>
+                        <div class="data-value">
+                            <span id="ay">0.00</span>
+                            <span class="data-unit">g</span>
+                        </div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Z Axis</div>
+                        <div class="data-value">
+                            <span id="az">0.00</span>
+                            <span class="data-unit">g</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="main-grid">
+            <div class="chart-section">
+                <div class="section-title">📈 Sensor Data Timeline</div>
+                <div class="chart-container">
+                    <canvas id="sensorChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Flight Status -->
+        <div class="main-grid">
+            <div class="sensor-card">
+                <div class="section-title">🚀 Flight Status</div>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">Launch</span>
+                        <span class="status-indicator" id="statusLaunch">🔴</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">In Flight</span>
+                        <span class="status-indicator" id="statusFlight">🔴</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Deployment</span>
+                        <span class="status-indicator" id="statusDeploy">🔴</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Landed</span>
+                        <span class="status-indicator" id="statusLanded">🔴</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="main-grid">
+            <div class="control-panel">
+                <div class="section-title">⚙️ Control Panel</div>
+                <div class="control-grid">
+                    <button class="btn" id="connectBtn" onclick="connectSerial()">
+                        🔌 Connect Serial
+                    </button>
+                    <button class="btn" onclick="downloadLog()">
+                        📥 Download Full Log
+                    </button>
+                    <button class="btn" onclick="downloadModuleLog('BMP280')">
+                        📥 Download BMP280 Log
+                    </button>
+                    <button class="btn" onclick="downloadModuleLog('GPS')">
+                        📥 Download GPS Log
+                    </button>
+                    <button class="btn" onclick="downloadModuleLog('GY-521')">
+                        📥 Download GY-521 Log
+                    </button>
+                    <button class="btn danger" onclick="clearLogs()">
+                        🗑️ Clear All Logs
+                    </button>
+                </div>
+                
+                <div class="section-title" style="margin-top: 24px;">📋 System Log</div>
+                <div class="log-box" id="logBox"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="cansat-app.js"></script>
+</body>
+</html>
