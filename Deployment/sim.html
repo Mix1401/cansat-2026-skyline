@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sky's line</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#0d1b2a; --card:#111e30; --border:#1e3a55;
+  --accent:#00c8ff; --text:#cce4f7; --dim:#4a7a9b;
+  --green:#00e676; --red:#ff3d3d; --yellow:#ffc400;
+  --mono:'Share Tech Mono',monospace;
+}
+body { background:var(--bg); color:var(--text); font-family:'Sarabun',sans-serif; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+.topbar { background:#07111c; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 20px; height:44px; flex-shrink:0; }
+.topbar-center { font-family:var(--mono); font-size:0.85rem; color:var(--text); letter-spacing:0.06em; }
+.topbar-left { display:flex; align-items:center; gap:10px; font-size:0.75rem; color:var(--dim); }
+.topbar-right { font-family:var(--mono); font-size:0.8rem; color:var(--accent); }
+.ws-badge { display:flex; align-items:center; gap:6px; font-size:0.65rem; letter-spacing:0.1em; padding:3px 10px; border-radius:3px; border:1px solid var(--border); }
+.ws-dot { width:8px; height:8px; border-radius:50%; background:var(--red); }
+.ws-dot.on  { background:var(--green); box-shadow:0 0 8px var(--green); animation:blink 1.5s infinite; }
+.ws-dot.sim { background:var(--yellow); box-shadow:0 0 8px var(--yellow); animation:blink 1s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.ip-row { display:flex; align-items:center; gap:6px; }
+.ip-input { background:#0a1623; border:1px solid var(--border); color:var(--accent); font-family:var(--mono); font-size:0.7rem; padding:4px 8px; border-radius:3px; width:140px; }
+.conn-btn { background:transparent; border:1px solid var(--accent); color:var(--accent); font-family:var(--mono); font-size:0.65rem; padding:4px 10px; border-radius:3px; cursor:pointer; transition:all 0.2s; }
+.conn-btn:hover { background:rgba(0,200,255,0.1); }
+.conn-btn.disc { border-color:var(--red); color:var(--red); }
+.sim-btn { background:transparent; border:1px solid var(--yellow); color:var(--yellow); font-family:var(--mono); font-size:0.65rem; padding:4px 10px; border-radius:3px; cursor:pointer; transition:all 0.2s; }
+.sim-btn:hover { background:rgba(255,196,0,0.1); }
+.sim-btn.stop { border-color:var(--dim); color:var(--dim); }
+.main { display:flex; flex:1; overflow:hidden; }
+#map { flex:1; min-width:0; }
+.leaflet-tile { filter:saturate(0.6) brightness(0.75); }
+.right { width:320px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; padding:10px; overflow-y:auto; background:#0a1623; border-left:1px solid var(--border); }
+.right::-webkit-scrollbar { width:4px; }
+.right::-webkit-scrollbar-thumb { background:var(--border); }
+.scard { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:12px 14px; }
+.scard-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.scard-title { display:flex; align-items:center; gap:8px; font-size:0.75rem; font-weight:700; color:var(--accent); letter-spacing:0.05em; }
+.scard-icon { width:20px; height:20px; border-radius:50%; border:1.5px solid var(--accent); display:flex; align-items:center; justify-content:center; font-size:0.6rem; color:var(--accent); }
+.log-btn { background:transparent; border:1px solid var(--border); color:var(--dim); padding:3px 8px; border-radius:3px; font-size:0.6rem; cursor:pointer; font-family:var(--mono); transition:all 0.2s; display:flex; align-items:center; gap:4px; }
+.log-btn:hover { border-color:var(--accent); color:var(--accent); }
+.row2 { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+.field-label { font-size:0.6rem; color:var(--dim); margin-bottom:2px; letter-spacing:0.06em; }
+.field-val { font-family:var(--mono); font-size:1.0rem; color:var(--text); }
+.field-val.big { font-size:1.45rem; color:var(--accent); line-height:1; }
+.field-val.warn { color:var(--yellow) !important; }
+.field-val.hot  { color:var(--red) !important; animation:flash 0.6s infinite; }
+@keyframes flash { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.field-unit { font-size:0.6rem; color:var(--dim); margin-left:2px; }
+.xyz-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
+.xyz-item { background:rgba(0,0,0,0.3); border-radius:4px; padding:5px 8px; text-align:center; }
+.xyz-axis { font-size:0.55rem; color:var(--dim); margin-bottom:2px; }
+.xyz-val  { font-family:var(--mono); font-size:0.82rem; color:var(--text); }
+.statusbar { background:#07111c; border-top:1px solid var(--border); display:flex; align-items:center; padding:0 20px; height:38px; flex-shrink:0; gap:28px; }
+.status-group { display:flex; align-items:center; gap:8px; font-size:0.72rem; color:var(--dim); }
+.dot { width:10px; height:10px; border-radius:50%; background:var(--red); display:inline-block; }
+.dot.on { background:var(--green); box-shadow:0 0 8px var(--green); }
+.dot.blink-g { background:var(--green); box-shadow:0 0 8px var(--green); animation:blink 1s infinite; }
+.center-status { flex:1; text-align:center; font-size:0.75rem; font-weight:700; letter-spacing:0.06em; color:var(--text); }
+.dl-btn { margin-left:auto; background:transparent; border:1px solid var(--border); color:var(--dim); padding:5px 14px; border-radius:3px; font-size:0.65rem; cursor:pointer; font-family:var(--mono); display:flex; align-items:center; gap:6px; transition:all 0.2s; }
+.dl-btn:hover { border-color:var(--accent); color:var(--accent); }
+#noSignal { position:absolute; inset:0; background:rgba(7,17,28,0.85); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:1000; gap:12px; font-family:var(--mono); color:var(--dim); }
+#noSignal.hidden { display:none; }
+.ns-title { font-size:1rem; letter-spacing:0.2em; color:var(--border); }
+.ns-sub   { font-size:0.65rem; letter-spacing:0.12em; }
+.ns-or    { font-size:0.6rem; margin:4px 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <span style="font-size:1.1rem;color:var(--accent)">⌘</span>
+    <span>WIFI Access Point</span>
+    <div class="ip-row">
+      <input class="ip-input" id="wsIp" value="192.168.4.1" placeholder="ESP32 IP"/>
+      <button class="conn-btn" id="connBtn" onclick="toggleWS()">CONNECT</button>
+    </div>
+    <button class="sim-btn" id="simBtn" onclick="toggleSim()">▶ SIM</button>
+    <div class="ws-badge">
+      <div class="ws-dot" id="wsDot"></div>
+      <span id="wsLabel">DISCONNECTED</span>
+    </div>
+  </div>
+  <div class="topbar-center" id="clock">UTC+7 &nbsp;--/---/-- &nbsp;--:--:--</div>
+  <div class="topbar-right">Runtime : <span id="runtime">0</span> sec</div>
+</div>
+
+<div class="main" style="position:relative">
+  <div id="map"></div>
+  <div id="noSignal">
+    <div class="ns-title">NO SIGNAL</div>
+    <div class="ns-sub">Connect to ESP32 WiFi: <strong style="color:var(--accent)">CanSat-GCS</strong></div>
+    <div class="ns-sub">Then click CONNECT above &nbsp;|&nbsp; ws://192.168.4.1:81</div>
+    <div class="ns-or">── หรือ ──</div>
+    <button onclick="toggleSim()" style="background:transparent;border:1px solid var(--yellow);color:var(--yellow);font-family:var(--mono);font-size:0.7rem;padding:6px 18px;border-radius:3px;cursor:pointer;letter-spacing:0.1em">▶ เริ่ม SIMULATE</button>
+  </div>
+
+  <div class="right">
+    <div class="scard">
+      <div class="scard-head">
+        <div class="scard-title"><div class="scard-icon">⊕</div>MPU6050</div>
+        <button class="log-btn" onclick="dlLog('MPU6050')">⬇ Module Log</button>
+      </div>
+      <div class="row2" style="margin-bottom:10px">
+        <div><div class="field-label">A_XY (Tilt)</div><div class="field-val big" id="axy">--<span class="field-unit">m/s²</span></div></div>
+        <div><div class="field-label">|A| Total</div><div class="field-val big" id="atotal">--<span class="field-unit">m/s²</span></div></div>
+      </div>
+      <div style="margin-bottom:8px">
+        <div class="field-label" style="margin-bottom:6px">ACCELEROMETER (m/s²)</div>
+        <div class="xyz-grid">
+          <div class="xyz-item"><div class="xyz-axis">X</div><div class="xyz-val" id="ax">--</div></div>
+          <div class="xyz-item"><div class="xyz-axis">Y</div><div class="xyz-val" id="ay">--</div></div>
+          <div class="xyz-item"><div class="xyz-axis">Z</div><div class="xyz-val" id="az">--</div></div>
+        </div>
+      </div>
+      <div>
+        <div class="field-label" style="margin-bottom:6px">GYROSCOPE (°/s)</div>
+        <div class="xyz-grid">
+          <div class="xyz-item"><div class="xyz-axis">X</div><div class="xyz-val" id="gx">--</div></div>
+          <div class="xyz-item"><div class="xyz-axis">Y</div><div class="xyz-val" id="gy">--</div></div>
+          <div class="xyz-item"><div class="xyz-axis">Z</div><div class="xyz-val" id="gz">--</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scard">
+      <div class="scard-head">
+        <div class="scard-title"><div class="scard-icon">◎</div>GY-NEO6MV2 (GPS)</div>
+        <button class="log-btn" onclick="dlLog('GPS')">⬇ Module Log</button>
+      </div>
+      <div class="row2" style="margin-bottom:8px">
+        <div><div class="field-label">Latitude</div><div class="field-val" id="lat" style="font-size:0.9rem">--</div></div>
+        <div><div class="field-label">Altitude</div><div class="field-val big" id="alt">--<span class="field-unit">m</span></div></div>
+      </div>
+      <div><div class="field-label">Longitude</div><div class="field-val" id="lon" style="font-size:0.9rem">--</div></div>
+      <div style="margin-top:8px"><div class="field-label">GPS Fix</div><div class="field-val" id="gpsFix" style="font-size:0.8rem;color:var(--red)">NO FIX</div></div>
+    </div>
+
+    <div class="scard">
+      <div class="scard-head">
+        <div class="scard-title"><div class="scard-icon">⚡</div>INA219 (Power)</div>
+        <button class="log-btn" onclick="dlLog('INA219')">⬇ Module Log</button>
+      </div>
+      <div class="row2">
+        <div><div class="field-label">Voltage</div><div class="field-val big" id="volt">--<span class="field-unit">V</span></div></div>
+        <div><div class="field-label">Current</div><div class="field-val big" id="curr">--<span class="field-unit">mA</span></div></div>
+      </div>
+    </div>
+
+    <div class="scard">
+      <div class="scard-head"><div class="scard-title"><div class="scard-icon">↗</div>LoRa SX1276</div></div>
+      <div class="row3">
+        <div><div class="field-label">Freq</div><div class="field-val" style="font-size:0.8rem">923 MHz</div></div>
+        <div><div class="field-label">TX Count</div><div class="field-val" id="loraTx" style="font-size:0.8rem">0</div></div>
+        <div><div class="field-label">State</div><div class="field-val" id="loraState" style="font-size:0.8rem;color:var(--green)">--</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="statusbar">
+  <div class="status-group">
+    <strong>Status</strong>
+    Launch: <div class="dot" id="dotLaunch"></div>
+    &nbsp;Deploy: <div class="dot" id="dotDeploy"></div>
+    &nbsp;Land: <div class="dot" id="dotLand"></div>
+  </div>
+  <div class="center-status">Copyright @ 2026 Sky's line</div>
+  <button class="dl-btn" onclick="dlCansat()">⬇ Download Cansat Log</button>
+</div>
+
+<script>
+// ── MAP ───────────────────────────────────────────────────
+const map = L.map('map', { center:[14.5429,100.9102], zoom:17, attributionControl:false });
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:20 }).addTo(map);
+const markerIcon = L.divIcon({
+  html:`<div style="position:relative">
+    <div style="position:absolute;top:-8px;left:-8px;width:30px;height:30px;border-radius:50%;border:2px solid rgba(255,107,53,0.5);animation:ring 2s ease-out infinite"></div>
+    <div style="width:14px;height:14px;background:#ff6b35;border-radius:50%;border:2px solid #fff;box-shadow:0 0 12px #ff6b35"></div>
+  </div>`,
+  iconSize:[14,14], iconAnchor:[7,7], className:''
+});
+const marker = L.marker([14.5429,100.9102], {icon:markerIcon}).addTo(map);
+const trail  = L.polyline([], {color:'#00c8ff', weight:2, opacity:0});
+
+// ── GLOBAL ────────────────────────────────────────────────
+let ws=null, connected=false;
+let simRunning=false, simTimer=null, simT=0;
+let simLat=14.5429, simLon=100.9102, simVolt=7.35;
+let txCount=0, startTime=null;
+const logRows=[];
+let launched=false, ejected=false, mapMoved=false;
+
+// ── CLOCK ─────────────────────────────────────────────────
+setInterval(()=>{
+  const now=new Date(), pad=n=>String(n).padStart(2,'0');
+  const mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clock').textContent=
+    `UTC+7  ${pad(now.getDate())}-${mo[now.getMonth()]}-${String(now.getFullYear()).slice(2)}  ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  if(startTime) document.getElementById('runtime').textContent=Math.floor((Date.now()-startTime)/1000);
+},500);
+
+// ── NOISE helper ──────────────────────────────────────────
+function n(s){ return (Math.random()-0.5)*2*s; }
+
+// ── SIMULATOR — ค้างที่ DEPLOY, ค่าแกว่งรอบ reference ───
+function startSim(){
+  if(connected) disconnectWS();
+  simRunning=true; simT=0;
+  simLat=14.5429; simLon=100.9102; simVolt=7.35;
+  txCount=0; launched=false; ejected=false; mapMoved=false;
+  trail.setLatLngs([]);
+  if(!startTime) startTime=Date.now();
+  ['dotLaunch','dotDeploy','dotLand'].forEach(id=>document.getElementById(id).className='dot');
+  // Deploy dots ติดทันที
+  document.getElementById('dotLaunch').className='dot blink-g';
+  document.getElementById('dotDeploy').className='dot on';
+  document.getElementById('wsDot').className='ws-dot sim';
+  document.getElementById('wsLabel').textContent='SIMULATE';
+  document.getElementById('simBtn').textContent='■ STOP';
+  document.getElementById('simBtn').className='sim-btn stop';
+  document.getElementById('noSignal').className='hidden';
+  simTimer=setInterval(simTick,100);
+}
+function stopSim(){
+  simRunning=false; clearInterval(simTimer);
+  document.getElementById('wsDot').className='ws-dot';
+  document.getElementById('wsLabel').textContent='DISCONNECTED';
+  document.getElementById('simBtn').textContent='▶ SIM';
+  document.getElementById('simBtn').className='sim-btn';
+  document.getElementById('noSignal').className='';
+}
+function toggleSim(){ simRunning?stopSim():startSim(); }
+
+function simTick(){
+  simT+=0.1;
+  simVolt=Math.max(7.20, simVolt-0.00015);
+
+  // ── ค่า reference ±noise เล็กน้อย ─────────────────────
+  // Accel target: X=2.84  Y=4.18  Z=0.57
+  const ax = 2.84 + 0.15*Math.sin(simT*1.30) + n(0.05);
+  const ay = 4.18 + 0.18*Math.cos(simT*0.95) + n(0.06);
+  const az = 0.57 + 0.05*Math.sin(simT*2.10) + n(0.03);
+
+  // Gyro target: X=12.54  Y=76.47  Z=46.14
+  const gx = 12.54 + 1.0*Math.sin(simT*1.10) + n(0.40);
+  const gy = 76.47 + 2.5*Math.cos(simT*0.80) + n(1.00);
+  const gz = 46.14 + 1.5*Math.sin(simT*1.40) + n(0.70);
+
+  // Altitude: 312.05 ±GPS jitter
+  const alt = 312.05 + 0.3*Math.sin(simT*0.25) + n(0.10);
+
+  // GPS drift ลมเบา
+  simLat += 0.0000012;
+  simLon += 0.0000008;
+
+  const a_xy    = Math.sqrt(ax*ax + ay*ay);
+  const total_a = Math.sqrt(ax*ax + ay*ay + az*az);
+
+  const d = {
+    t:Math.round(simT*1000),
+    ax,ay,az, a_xy, total_a,
+    gx,gy,gz,
+    lat:simLat, lon:simLon, alt,
+    volt:simVolt+n(0.004),
+    curr:Math.max(800, 1500 - simT*2.5) + n(20),
+    gps:true,
+    state:'EJECT',
+  };
+
+  updateUI(d); saveLog(d);
+  txCount++;
+  document.getElementById('loraTx').textContent   = txCount;
+  document.getElementById('loraState').textContent = 'EJECT';
+}
+
+// ── WEBSOCKET ─────────────────────────────────────────────
+function toggleWS(){
+  if(connected){disconnectWS();return;}
+  if(simRunning) stopSim();
+  connectWS(document.getElementById('wsIp').value.trim());
+}
+function connectWS(ip){
+  ws=new WebSocket(`ws://${ip}:81`);
+  ws.onopen=()=>{
+    connected=true;
+    if(!startTime) startTime=Date.now();
+    document.getElementById('wsDot').className='ws-dot on';
+    document.getElementById('wsLabel').textContent='LIVE';
+    document.getElementById('connBtn').textContent='DISCONNECT';
+    document.getElementById('connBtn').className='conn-btn disc';
+    document.getElementById('noSignal').className='hidden';
+    document.getElementById('loraState').textContent='OK';
+  };
+  ws.onmessage=e=>{
+    try{const d=JSON.parse(e.data);updateUI(d);saveLog(d);txCount++;document.getElementById('loraTx').textContent=txCount;}catch(err){}
+  };
+  ws.onclose=ws.onerror=()=>{
+    connected=false;
+    document.getElementById('wsDot').className='ws-dot';
+    document.getElementById('wsLabel').textContent='DISCONNECTED';
+    document.getElementById('connBtn').textContent='CONNECT';
+    document.getElementById('connBtn').className='conn-btn';
+    if(!simRunning) document.getElementById('noSignal').className='';
+    document.getElementById('loraState').textContent='--';
+  };
+}
+function disconnectWS(){ if(ws){ws.close();ws=null;} }
+
+// ── UI UPDATE ─────────────────────────────────────────────
+function updateUI(d){
+  const fmt=(v,dc=2)=>v==null?'--':Number(v).toFixed(dc);
+  const axyV=d.a_xy??0;
+  const axyEl=document.getElementById('axy');
+  axyEl.innerHTML=`${fmt(axyV)}<span class="field-unit">m/s²</span>`;
+  axyEl.className='field-val big'+(axyV>=8.84?' hot':axyV>=6?' warn':'');
+  document.getElementById('atotal').innerHTML=`${fmt(d.total_a)}<span class="field-unit">m/s²</span>`;
+  document.getElementById('ax').textContent=fmt(d.ax);
+  document.getElementById('ay').textContent=fmt(d.ay);
+  document.getElementById('az').textContent=fmt(d.az);
+  document.getElementById('gx').textContent=fmt(d.gx,2);
+  document.getElementById('gy').textContent=fmt(d.gy,2);
+  document.getElementById('gz').textContent=fmt(d.gz,2);
+  document.getElementById('lat').textContent=fmt(d.lat,6);
+  document.getElementById('lon').textContent=fmt(d.lon,6);
+  document.getElementById('alt').innerHTML=`${fmt(d.alt,2)}<span class="field-unit">m</span>`;
+  const fixEl=document.getElementById('gpsFix');
+  fixEl.textContent=d.gps?'FIX 3D':'SEARCHING';
+  fixEl.style.color=d.gps?'var(--green)':'var(--yellow)';
+  const v=d.volt??0;
+  const voltEl=document.getElementById('volt');
+  voltEl.innerHTML=`${fmt(v,2)}<span class="field-unit">V</span>`;
+  voltEl.className='field-val big'+(v<6.8?' hot':v<7.0?' warn':'');
+  document.getElementById('curr').innerHTML=`${fmt(d.curr,0)}<span class="field-unit">mA</span>`;
+  const state=d.state??'';
+  if(state!=='STANDBY'&&!launched){launched=true;document.getElementById('dotLaunch').className='dot blink-g';}
+  if((state==='EJECT'||state==='EMERG')&&!ejected){ejected=true;document.getElementById('dotDeploy').className='dot on';}
+  if(state==='RECOVERY'&&ejected){document.getElementById('dotLand').className='dot on';}
+  if(d.gps&&d.lat&&d.lon){
+    const ll=[d.lat,d.lon];
+    marker.setLatLng(ll); trail.addLatLng(ll);
+    if(!mapMoved){map.setView(ll,17);mapMoved=true;}
+  }
+}
+
+function saveLog(d){
+  const f=(v,dc=2)=>v==null?'':Number(v).toFixed(dc);
+  logRows.push(`${d.t},${f(d.az)},${f(d.a_xy)},${f(d.total_a)},${f(d.lat,6)},${f(d.lon,6)},${f(d.alt,2)},${f(d.volt,3)},${f(d.curr,1)},${d.state}`);
+}
+function dlLog(m){dl(`${m}_log.txt`,`Module:${m}\n\n`+logRows.slice(-100).join('\n'));}
+function dlCansat(){dl('cansat_log.csv','millis,az,a_xy,total_a,lat,lon,alt,volt,curr,state\n'+logRows.join('\n'));}
+function dl(name,content){
+  const a=document.createElement('a');
+  a.href='data:text/plain;charset=utf-8,'+encodeURIComponent(content);
+  a.download=name;a.click();
+}
+</script>
+</body>
+</html>
