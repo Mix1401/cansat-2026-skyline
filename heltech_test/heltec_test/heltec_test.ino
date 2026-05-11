@@ -2,15 +2,23 @@
 #include <RadioLib.h>
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
+#include <Adafruit_AMG88xx.h>
 #include <OLEDDisplayFonts.h>
 #include <TinyGPSPlus.h>
-
-// ── BMP280 + MPU6050 on Wire1 (SDA=41, SCL=42) ───────────────────────────────
-// BMP280 addr: 0x76  |  MPU6050 addr: 0x68 (AD0 low)
+// ── Wire1 sensors (SDA=41, SCL=42) ───────────────────────────────────────────
+// BMP280 @ 0x76 | MPU6050 @ 0x68 (AD0 low) | AMG8833 @ 0x69 (ADR high)
 Adafruit_BMP280 bmp(&Wire1);
+Adafruit_AMG88xx amg;
 
 const int MPU_ADDR = 0x68;
+#define AMG_ADDR  0x69
 float AcX, AcY, AcZ, GyX, GyY, GyZ;
+float amgPixels[AMG88xx_PIXEL_ARRAY_SIZE];
+
+// ── ESP32-CAM serial (thumbnail receive) ─────────────────────────────────────
+// ESP32-CAM TX (GPIO 1) → Heltec GPIO 3 (Serial1 RX)
+#define CAM_SERIAL_RX  3
+static uint8_t thumbBuf[1024];  // 32x32 grayscale thumbnail
 
 // ── NEO-M8N GPS on Serial2 ────────────────────────────────────────────────────
 TinyGPSPlus gps;
@@ -30,7 +38,62 @@ RTC_DATA_ATTR int txCount = 0;
 #define LORA_TX_POWER    14      // dBm
 
 // ── Timing ───────────────────────────────────────────────────────────────────
-#define TX_INTERVAL_MS   2000    // send every 2 s
+#define TX_INTERVAL_MS  2000   // sensor telemetry every 2 s
+#define IMG_DATA_SIZE   200    // bytes per LoRa packet (222 max - 5 header)
+
+// ── Receive thumbnail from ESP32-CAM via Serial1 ─────────────────────────────
+// Protocol: [0xFF][0xAA][sizeH][sizeL][...data...]
+// Returns data length, 0 if nothing received
+uint16_t receiveThumbnail() {
+  if (Serial1.available() < 4) return 0;
+  if (Serial1.read() != 0xFF) return 0;
+  if (Serial1.read() != 0xAA) return 0;
+  uint16_t size = (uint16_t)Serial1.read() << 8 | Serial1.read();
+  if (size == 0 || size > sizeof(thumbBuf)) return 0;
+
+  uint16_t received = 0;
+  unsigned long t = millis();
+  while (received < size) {
+    if (Serial1.available()) {
+      thumbBuf[received++] = Serial1.read();
+    } else if (millis() - t > 2000) {
+      Serial.println("[CAM] Serial timeout");
+      return 0;
+    }
+  }
+  return received;
+}
+
+// ── LoRa image fragmented TX ──────────────────────────────────────────────────
+// Packet: [0]='I' [1]=seq [2]=total [3]=sizeH [4]=sizeL [5..]=JPEG data
+void sendImageOverLoRa(const uint8_t* buf, size_t len) {
+  uint8_t totalPkts = (len + IMG_DATA_SIZE - 1) / IMG_DATA_SIZE;
+  if (totalPkts == 0) return;
+
+  uint8_t pkt[IMG_DATA_SIZE + 5];
+  Serial.printf("[CAM] Sending %d bytes in %d packets\n", len, totalPkts);
+
+  for (uint8_t seq = 0; seq < totalPkts; seq++) {
+    size_t offset   = seq * IMG_DATA_SIZE;
+    size_t chunkLen = min((size_t)IMG_DATA_SIZE, len - offset);
+    pkt[0] = 'I';
+    pkt[1] = seq;
+    pkt[2] = totalPkts;
+    pkt[3] = (uint8_t)(len >> 8);
+    pkt[4] = (uint8_t)(len & 0xFF);
+    memcpy(pkt + 5, buf + offset, chunkLen);
+
+    heltec_led(50);
+    int state = radio.transmit(pkt, chunkLen + 5);
+    heltec_led(0);
+
+    if (state != RADIOLIB_ERR_NONE) {
+      Serial.printf("[CAM] Pkt %d/%d FAILED code %d\n", seq + 1, totalPkts, state);
+    }
+    delay(50);
+  }
+  Serial.printf("[CAM] TX done (%d pkts)\n", totalPkts);
+}
 
 // ── OLED helper ──────────────────────────────────────────────────────────────
 void displayStatus(const char* line1, const char* line2 = "", const char* line3 = "") {
@@ -63,7 +126,11 @@ void setup() {
   Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.println("[OK] GPS serial started");
 
-  Serial.println("\n=== Heltec V3 LoRa Sender (BMP280 + MPU6050 + GPS) ===");
+  // ESP32-CAM serial (receive thumbnail)
+  Serial1.begin(115200, SERIAL_8N1, CAM_SERIAL_RX, -1);
+  Serial.println("[OK] CAM serial ready");
+
+  Serial.println("\n=== Heltec V3 LoRa Sender (BMP280 + MPU6050 + AMG8833 + ESP-CAM + GPS) ===");
 
   // ── BMP280 ────────────────────────────────────────────────────────────────
   if (!bmp.begin(0x76)) {
@@ -103,6 +170,14 @@ void setup() {
     while (true) delay(1000);
   }
   Serial.println("[OK] MPU6050 ready");
+
+  // ── AMG8833 ───────────────────────────────────────────────────────────────
+  if (!amg.begin(AMG_ADDR, &Wire1)) {
+    Serial.println("[ERROR] AMG8833 not found at 0x69!");
+    displayStatus("AMG8833 ERROR", "Check wiring");
+    while (true) delay(1000);
+  }
+  Serial.println("[OK] AMG8833 ready");
 
   // ── SX1262 LoRa ───────────────────────────────────────────────────────────
   int state = radio.begin(
@@ -161,6 +236,18 @@ void loop() {
   Serial.printf("[IMU] Accel=%.2f,%.2f,%.2f m/s2  Gyro=%.2f,%.2f,%.2f rad/s\n",
                 ax, ay, az, gx, gy, gz);
 
+  // ── Read AMG8833 ──────────────────────────────────────────────────────────
+  amg.readPixels(amgPixels);
+  float irMin = amgPixels[0], irMax = amgPixels[0], irSum = 0;
+  for (int i = 0; i < AMG88xx_PIXEL_ARRAY_SIZE; i++) {
+    if (amgPixels[i] < irMin) irMin = amgPixels[i];
+    if (amgPixels[i] > irMax) irMax = amgPixels[i];
+    irSum += amgPixels[i];
+  }
+  float irAvg = irSum / AMG88xx_PIXEL_ARRAY_SIZE;
+
+  Serial.printf("[AMG] Min=%.1f  Max=%.1f  Avg=%.1f C\n", irMin, irMax, irAvg);
+
   // ── Read GPS ──────────────────────────────────────────────────────────────
   bool    gpsFix = gps.location.isValid() && gps.location.age() < 2000;
   double  lat    = gpsFix ? gps.location.lat() : 0.0;
@@ -172,13 +259,15 @@ void loop() {
                 gpsFix ? "YES" : "NO", lat, lon, altGPS, sats);
 
   // ── Build payload ─────────────────────────────────────────────────────────
-  char payload[192];
+  char payload[224];
   snprintf(payload, sizeof(payload),
            "TX:%d,T:%.2f,P:%.2f,AB:%.1f,LAT:%.6f,LON:%.6f,AG:%.1f,SAT:%d,FIX:%d"
-           ",AX:%.2f,AY:%.2f,AZ:%.2f,GX:%.2f,GY:%.2f,GZ:%.2f",
+           ",AX:%.2f,AY:%.2f,AZ:%.2f,GX:%.2f,GY:%.2f,GZ:%.2f"
+           ",IR_MIN:%.1f,IR_MAX:%.1f,IR_AVG:%.1f",
            ++txCount, tempC, pressHPa, altBaro,
            lat, lon, altGPS, sats, gpsFix ? 1 : 0,
-           ax, ay, az, gx, gy, gz);
+           ax, ay, az, gx, gy, gz,
+           irMin, irMax, irAvg);
 
   Serial.printf("[TX] Sending: %s\n", payload);
 
@@ -187,7 +276,7 @@ void loop() {
   snprintf(oledLine1, sizeof(oledLine1), "TX#%d %s %dsat",
            txCount, gpsFix ? "FIX" : "---", sats);
   snprintf(oledLine2, sizeof(oledLine2), "T:%.1fC P:%.0fhPa", tempC, pressHPa);
-  snprintf(oledLine3, sizeof(oledLine3), "A:%.1f,%.1f,%.1f", ax, ay, az);
+  snprintf(oledLine3, sizeof(oledLine3), "IR:%.1f/%.1f/%.1f", irMin, irAvg, irMax);
   displayStatus(oledLine1, oledLine2, oledLine3);
 
   // ── Transmit ─────────────────────────────────────────────────────────────
@@ -201,6 +290,13 @@ void loop() {
   } else {
     Serial.printf("[TX] FAILED, code %d\n", state);
     displayStatus(oledLine1, oledLine2, "TX FAILED");
+  }
+
+  // ── Receive thumbnail from ESP32-CAM → forward via LoRa ──────────────────
+  uint16_t thumbLen = receiveThumbnail();
+  if (thumbLen > 0) {
+    Serial.printf("[CAM] Received thumb %d bytes → sending via LoRa\n", thumbLen);
+    sendImageOverLoRa(thumbBuf, thumbLen);
   }
 
   // Feed GPS during TX interval (non-blocking)

@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# PlatformIO
+firmware/.pio/
+firmware/.pioenvs/
+firmware/.piolibdeps/
+
+# Arduino / PlatformIO build artifacts
+*.elf
+*.hex
+*.bin
+*.map
+
+# Arduino IDE
+*.bak
+.arduino15/
+
+# Serial logs / data captures
+*.log
+*.csv
+
+# Editor
+.vscode/
+*.swp
+*~
