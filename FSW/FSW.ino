@@ -3,8 +3,9 @@
 //   BMP280  @ 0x76  — temperature, pressure, altitude
 //   MPU6050 @ 0x68  — accelerometer, gyroscope (raw Wire1)
 //   INA219  @ 0x40  — bus voltage, current, power
-//   AMG8833 @ 0x69  — 8×8 thermal array
+//   AMG8833 @ 0x69  — 8×8 thermal array (ADR pin → 3.3V)
 // GPS NEO-M8N on Serial2: RX=47 (← GPS TX), TX=48 (→ GPS RX)
+// ESP-CAM  on Serial1:    TX=4  (→ ESP-CAM RX) — GPS time sync at boot
 // ─────────────────────────────────────────────────────────────────────────────
 #include <heltec_unofficial.h>
 #include <RadioLib.h>
@@ -37,6 +38,12 @@ TinyGPSPlus gps;
 #define GPS_RX_PIN 47   // Heltec RX ← GPS TX
 #define GPS_TX_PIN 48   // Heltec TX → GPS RX
 
+// ── ESP-CAM sync (Serial1) ────────────────────────────────────────────────────
+#define CAM_TX_PIN 4    // Heltec TX → ESP-CAM RX (GPIO 3 on ESP32-CAM)
+#define CAM_RX_PIN 3    // unused — keep for Serial1 init
+#define CAM_BAUD   115200
+static bool camSynced = false;
+
 // ── LoRa ─────────────────────────────────────────────────────────────────────
 #define LORA_FREQUENCY   923.0   // AS923 — Thailand
 #define LORA_BANDWIDTH   125.0
@@ -67,11 +74,55 @@ void feedGPS() {
   while (Serial2.available()) gps.encode(Serial2.read());
 }
 
+// ── Unix timestamp from GPS (ms precision) ───────────────────────────────────
+// Returns millis()-based fallback if GPS time not valid
+uint32_t unixMs() {
+  if (!gps.date.isValid() || !gps.time.isValid()) return millis();
+  struct tm t = {};
+  t.tm_year = gps.date.year() - 1900;
+  t.tm_mon  = gps.date.month() - 1;
+  t.tm_mday = gps.date.day();
+  t.tm_hour = gps.time.hour();
+  t.tm_min  = gps.time.minute();
+  t.tm_sec  = gps.time.second();
+  return (uint32_t)(mktime(&t)) * 1000UL + gps.time.centisecond() * 10UL;
+}
+
+// ── Send GPS epoch to ESP-CAM over Serial1 ───────────────────────────────────
+// ESP-CAM listens for "SYNC:<unix_ms>\n" on its RX pin
+// Retries until ACK "ACK\n" received or timeout
+void syncESPCam() {
+  Serial.println("[CAM] Sending time sync...");
+  displayStatus("CAM sync...", "waiting ACK");
+
+  uint32_t ts = unixMs();
+  char msg[32];
+  snprintf(msg, sizeof(msg), "SYNC:%lu\n", (unsigned long)ts);
+  Serial1.print(msg);
+  Serial.printf("[CAM] Sent: %s", msg);
+
+  // wait up to 3s for ACK
+  unsigned long t0 = millis();
+  String ack = "";
+  while (millis() - t0 < 3000) {
+    while (Serial1.available()) ack += (char)Serial1.read();
+    if (ack.indexOf("ACK") >= 0) {
+      camSynced = true;
+      Serial.println("[CAM] Sync ACK received");
+      return;
+    }
+  }
+  // no ACK — continue anyway, ESP-CAM may not implement ACK
+  camSynced = true;
+  Serial.println("[CAM] Sync sent (no ACK — continuing)");
+}
+
 // ── AMG8833 fragmented TX ─────────────────────────────────────────────────────
 // Encoding: uint8 = clamp((pixel + 20) * 2, 0, 255)
 // Decode:   temp_C = (val / 2.0) - 20   → 0.5°C res, range −20..107.5°C
-// Packet:   ['A', seq, total, sizeH, sizeL, ...encoded pixels...]
-void sendAMGGrid(const float* pixels) {
+// Packet:   ['A', seq, total, sizeH, sizeL, ts3, ts2, ts1, ts0, ...pixels...]
+//           ts = unix_ms big-endian uint32 (only in seq=0 packet)
+void sendAMGGrid(const float* pixels, uint32_t ts) {
   uint8_t encoded[AMG88xx_PIXEL_ARRAY_SIZE];
   for (int i = 0; i < AMG88xx_PIXEL_ARRAY_SIZE; i++) {
     int v = (int)((pixels[i] + 20.0f) * 2.0f + 0.5f);
@@ -80,22 +131,32 @@ void sendAMGGrid(const float* pixels) {
 
   const uint16_t totalBytes = AMG88xx_PIXEL_ARRAY_SIZE;  // 64
   const uint8_t  totalPkts  = (totalBytes + AMG_FRAG_SIZE - 1) / AMG_FRAG_SIZE;
-  uint8_t pkt[AMG_FRAG_SIZE + 5];
+  // seq=0: 9-byte header (5 base + 4 ts); seq>0: 5-byte header
+  uint8_t pkt[AMG_FRAG_SIZE + 9];
 
-  Serial.printf("[AMG] TX grid %d bytes in %d frags\n", totalBytes, totalPkts);
+  Serial.printf("[AMG] TX grid %d bytes in %d frags ts=%lu\n",
+                totalBytes, totalPkts, (unsigned long)ts);
 
   for (uint8_t seq = 0; seq < totalPkts; seq++) {
     uint16_t offset   = seq * AMG_FRAG_SIZE;
     uint8_t  chunkLen = (uint8_t)min((int)AMG_FRAG_SIZE, (int)(totalBytes - offset));
+    uint8_t  hdrLen   = (seq == 0) ? 9 : 5;
+
     pkt[0] = 'A';
     pkt[1] = seq;
     pkt[2] = totalPkts;
     pkt[3] = (uint8_t)(totalBytes >> 8);
     pkt[4] = (uint8_t)(totalBytes & 0xFF);
-    memcpy(pkt + 5, encoded + offset, chunkLen);
+    if (seq == 0) {
+      pkt[5] = (uint8_t)(ts >> 24);
+      pkt[6] = (uint8_t)(ts >> 16);
+      pkt[7] = (uint8_t)(ts >>  8);
+      pkt[8] = (uint8_t)(ts & 0xFF);
+    }
+    memcpy(pkt + hdrLen, encoded + offset, chunkLen);
 
     heltec_led(30);
-    int state = radio.transmit(pkt, chunkLen + 5);
+    int state = radio.transmit(pkt, chunkLen + hdrLen);
     heltec_led(0);
 
     if (state != RADIOLIB_ERR_NONE) {
@@ -117,6 +178,9 @@ void setup() {
 
   Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.println("[OK] GPS serial started (RX=47, TX=48)");
+
+  Serial1.begin(CAM_BAUD, SERIAL_8N1, CAM_RX_PIN, CAM_TX_PIN);
+  Serial.println("[OK] ESP-CAM serial ready (TX=4)");
 
   // ── BMP280 ────────────────────────────────────────────────────────────────
   if (!bmp.begin(0x76)) {
@@ -179,7 +243,32 @@ void setup() {
   }
   radio.setCRC(true);
   Serial.println("[OK] LoRa ready");
-  displayStatus("FSW Ready", "Waiting GPS...");
+
+  // ── Wait for GPS fix → sync ESP-CAM time ──────────────────────────────────
+  displayStatus("Waiting GPS...", "for CAM sync");
+  unsigned long gpsTimeout = millis() + 120000;  // 2 min max wait
+  while (millis() < gpsTimeout) {
+    feedGPS();
+    if (gps.date.isValid() && gps.time.isValid() && gps.time.age() < 1000) {
+      syncESPCam();
+      break;
+    }
+    if (millis() % 1000 < 50) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "Sats:%d age:%lus",
+               gps.satellites.isValid() ? gps.satellites.value() : 0,
+               (millis()) / 1000);
+      displayStatus("Waiting GPS...", buf);
+    }
+    heltec_loop();
+    delay(10);
+  }
+  if (!camSynced) {
+    // GPS timeout — sync with millis() fallback
+    syncESPCam();
+  }
+
+  displayStatus("FSW Ready", camSynced ? "CAM synced" : "CAM sync fail");
   delay(1000);
 }
 
@@ -243,14 +332,15 @@ void loop() {
                 gpsFix ? "YES" : "NO", lat, lon, altGPS, sats);
 
   // ── Build & transmit payload ───────────────────────────────────────────────
-  char payload[224];
+  uint32_t ts = unixMs();
+  char payload[240];
   snprintf(payload, sizeof(payload),
-           "TX:%d,T:%.2f,P:%.2f,AB:%.1f"
+           "TS:%lu,TX:%d,T:%.2f,P:%.2f,AB:%.1f"
            ",LAT:%.6f,LON:%.6f,AG:%.1f,SAT:%d,FIX:%d"
            ",AX:%.2f,AY:%.2f,AZ:%.2f,GX:%.3f,GY:%.3f,GZ:%.3f"
            ",IR_MIN:%.1f,IR_MAX:%.1f,IR_AVG:%.1f"
            ",V:%.3f,I:%.1f,W:%.1f",
-           ++txCount, tempC, pressHPa, altBaro,
+           (unsigned long)ts, ++txCount, tempC, pressHPa, altBaro,
            lat, lon, altGPS, sats, gpsFix ? 1 : 0,
            ax, ay, az, gx, gy, gz,
            irMin, irMax, irAvg,
@@ -281,7 +371,7 @@ void loop() {
   if (++amgCycle >= AMG_TX_EVERY_N) {
     amgCycle = 0;
     displayStatus(l1, "AMG grid TX...", "");
-    sendAMGGrid(amgPixels);
+    sendAMGGrid(amgPixels, ts);
     displayStatus(l1, l2, l3);
   }
 
