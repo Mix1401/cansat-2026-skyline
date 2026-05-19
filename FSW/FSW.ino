@@ -52,8 +52,8 @@ static bool camSynced = false;
 #define LORA_SYNC_WORD   0x12
 #define LORA_TX_POWER    14
 
-#define TX_INTERVAL_MS   2000
-#define AMG_TX_EVERY_N   5      // send thermal grid every N telemetry cycles
+#define CYCLE_MS         1000   // total cycle period — telemetry + IR grid both at 1 Hz
+#define AMG_TX_EVERY_N   1      // send thermal grid every N telemetry cycles
 #define AMG_FRAG_SIZE    50     // bytes per LoRa fragment
 
 RTC_DATA_ATTR int txCount  = 0;
@@ -274,6 +274,7 @@ void setup() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 void loop() {
+  unsigned long cycleStart = millis();
   heltec_loop();
   feedGPS();
 
@@ -375,11 +376,12 @@ void loop() {
     displayStatus(l1, l2, l3);
   }
 
-  // Non-blocking wait — keep feeding GPS
-  unsigned long txEnd = millis() + TX_INTERVAL_MS;
-  while (millis() < txEnd) {
+  // Wait out remainder of 1s cycle — keep feeding GPS
+  long remaining = (long)(cycleStart + CYCLE_MS) - (long)millis();
+  while (remaining > 0) {
     heltec_loop();
     feedGPS();
     delay(10);
+    remaining = (long)(cycleStart + CYCLE_MS) - (long)millis();
   }
 }
