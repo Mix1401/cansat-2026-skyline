@@ -5,7 +5,6 @@
 //   INA219  @ 0x40  — bus voltage, current, power
 //   AMG8833 @ 0x69  — 8×8 thermal array (ADR pin → 3.3V)
 // GPS NEO-M8N on Serial2: RX=47 (← GPS TX), TX=48 (→ GPS RX)
-// ESP-CAM  on Serial1:    TX=4  (→ ESP-CAM RX) — GPS time sync at boot
 // ─────────────────────────────────────────────────────────────────────────────
 #include <heltec_unofficial.h>
 #include <RadioLib.h>
@@ -38,16 +37,10 @@ TinyGPSPlus gps;
 #define GPS_RX_PIN 47   // Heltec RX ← GPS TX
 #define GPS_TX_PIN 48   // Heltec TX → GPS RX
 
-// ── ESP-CAM sync (Serial1) ────────────────────────────────────────────────────
-#define CAM_TX_PIN 4    // Heltec TX → ESP-CAM RX (GPIO 3 on ESP32-CAM)
-#define CAM_RX_PIN 3    // unused — keep for Serial1 init
-#define CAM_BAUD   115200
-static bool camSynced = false;
-
 // ── LoRa ─────────────────────────────────────────────────────────────────────
-#define LORA_FREQUENCY   923.0   // AS923 — Thailand
+#define LORA_FREQUENCY   923.250
 #define LORA_BANDWIDTH   125.0
-#define LORA_SPREADING   7
+#define LORA_SPREADING   11
 #define LORA_CODING_RATE 5
 #define LORA_SYNC_WORD   0x12
 #define LORA_TX_POWER    14
@@ -86,35 +79,6 @@ uint32_t unixMs() {
   t.tm_min  = gps.time.minute();
   t.tm_sec  = gps.time.second();
   return (uint32_t)(mktime(&t)) * 1000UL + gps.time.centisecond() * 10UL;
-}
-
-// ── Send GPS epoch to ESP-CAM over Serial1 ───────────────────────────────────
-// ESP-CAM listens for "SYNC:<unix_ms>\n" on its RX pin
-// Retries until ACK "ACK\n" received or timeout
-void syncESPCam() {
-  Serial.println("[CAM] Sending time sync...");
-  displayStatus("CAM sync...", "waiting ACK");
-
-  uint32_t ts = unixMs();
-  char msg[32];
-  snprintf(msg, sizeof(msg), "SYNC:%lu\n", (unsigned long)ts);
-  Serial1.print(msg);
-  Serial.printf("[CAM] Sent: %s", msg);
-
-  // wait up to 3s for ACK
-  unsigned long t0 = millis();
-  String ack = "";
-  while (millis() - t0 < 3000) {
-    while (Serial1.available()) ack += (char)Serial1.read();
-    if (ack.indexOf("ACK") >= 0) {
-      camSynced = true;
-      Serial.println("[CAM] Sync ACK received");
-      return;
-    }
-  }
-  // no ACK — continue anyway, ESP-CAM may not implement ACK
-  camSynced = true;
-  Serial.println("[CAM] Sync sent (no ACK — continuing)");
 }
 
 // ── AMG8833 fragmented TX ─────────────────────────────────────────────────────
@@ -179,9 +143,6 @@ void setup() {
   Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.println("[OK] GPS serial started (RX=47, TX=48)");
 
-  Serial1.begin(CAM_BAUD, SERIAL_8N1, CAM_RX_PIN, CAM_TX_PIN);
-  Serial.println("[OK] ESP-CAM serial ready (TX=4)");
-
   // ── BMP280 ────────────────────────────────────────────────────────────────
   if (!bmp.begin(0x76)) {
     if (!bmp.begin(0x77)) {
@@ -244,31 +205,7 @@ void setup() {
   radio.setCRC(true);
   Serial.println("[OK] LoRa ready");
 
-  // ── Wait for GPS fix → sync ESP-CAM time ──────────────────────────────────
-  displayStatus("Waiting GPS...", "for CAM sync");
-  unsigned long gpsTimeout = millis() + 120000;  // 2 min max wait
-  while (millis() < gpsTimeout) {
-    feedGPS();
-    if (gps.date.isValid() && gps.time.isValid() && gps.time.age() < 1000) {
-      syncESPCam();
-      break;
-    }
-    if (millis() % 1000 < 50) {
-      char buf[32];
-      snprintf(buf, sizeof(buf), "Sats:%d age:%lus",
-               gps.satellites.isValid() ? gps.satellites.value() : 0,
-               (millis()) / 1000);
-      displayStatus("Waiting GPS...", buf);
-    }
-    heltec_loop();
-    delay(10);
-  }
-  if (!camSynced) {
-    // GPS timeout — sync with millis() fallback
-    syncESPCam();
-  }
-
-  displayStatus("FSW Ready", camSynced ? "CAM synced" : "CAM sync fail");
+  displayStatus("FSW Ready", "");
   delay(1000);
 }
 
@@ -336,7 +273,7 @@ void loop() {
   uint32_t ts = unixMs();
   char payload[240];
   snprintf(payload, sizeof(payload),
-           "TS:%lu,TX:%d,T:%.2f,P:%.2f,AB:%.1f"
+           "TEAM:11,TS:%lu,TX:%d,T:%.2f,P:%.2f,AB:%.1f"
            ",LAT:%.6f,LON:%.6f,AG:%.1f,SAT:%d,FIX:%d"
            ",AX:%.2f,AY:%.2f,AZ:%.2f,GX:%.3f,GY:%.3f,GZ:%.3f"
            ",IR_MIN:%.1f,IR_MAX:%.1f,IR_AVG:%.1f"
