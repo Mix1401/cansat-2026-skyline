@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skysline FDS — Viewer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Courier New',monospace;font-size:13px;
+     height:100vh;display:flex;flex-direction:column;overflow:hidden}
+#hdr{display:flex;align-items:center;gap:14px;padding:8px 14px;background:#161b22;
+     border-bottom:1px solid #30363d;flex-shrink:0}
+#hdr h1{font-size:15px;letter-spacing:2px;color:#58a6ff}
+#hdr .meta{color:#8b949e}#hdr .meta b{color:#e6edf3}
+.spacer{flex:1}
+.cfg{display:flex;gap:6px;align-items:center}
+.cfg input{background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:3px 6px;
+           font:inherit;font-size:11px;border-radius:4px;width:180px}
+.cfg button{background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 10px;
+            font:inherit;border-radius:4px;cursor:pointer}
+.cfg button:hover{border-color:#58a6ff}
+
+#main{flex:1;display:grid;grid-template-columns:1fr 1fr 300px;gap:1px;background:#30363d;
+      overflow:hidden;min-height:0}
+.pane{background:#0d1117;display:flex;flex-direction:column;overflow:hidden}
+.pane-title{font-size:10px;letter-spacing:1.5px;color:#8b949e;text-transform:uppercase;
+            padding:8px 10px;background:#161b22;border-bottom:1px solid #21262d}
+.pane-body{flex:1;display:flex;align-items:center;justify-content:center;padding:10px;min-height:0;position:relative}
+#cam{max-width:100%;max-height:100%;object-fit:contain;border:1px solid #21262d;background:#000}
+#cam.missing{display:none}
+#cam-msg{color:#6e7681;font-size:12px;display:none}
+#thermal{max-width:100%;max-height:100%;image-rendering:pixelated;border:1px solid #21262d}
+
+#stats{background:#0d1117;overflow-y:auto}
+.grp{padding:10px;border-bottom:1px solid #21262d}
+.row{display:flex;justify-content:space-between;padding:3px 0}
+.row label{color:#8b949e}.row .v{color:#e6edf3;font-weight:bold}
+.zone-badge{display:inline-block;padding:3px 10px;border-radius:4px;color:#000;font-weight:bold}
+.fire-flag{font-size:16px;font-weight:bold;letter-spacing:1px}
+.fire-flag.on{color:#00e5ff}.fire-flag.off{color:#3fb950}
+.frs-bar{height:8px;background:#21262d;border-radius:4px;margin-top:4px;overflow:hidden}
+.frs-fill{height:100%;transition:width .15s,background .15s}
+
+#tl{flex-shrink:0;background:#161b22;border-top:1px solid #30363d;padding:8px 12px}
+#tl canvas{width:100%;height:90px;display:block;cursor:pointer}
+#controls{display:flex;align-items:center;gap:12px;padding:8px 12px;background:#161b22;
+          border-top:1px solid #30363d;flex-shrink:0}
+#controls button{background:#21262d;border:1px solid #30363d;color:#e6edf3;width:38px;height:30px;
+                 font-size:14px;border-radius:4px;cursor:pointer}
+#controls button:hover{border-color:#58a6ff}
+#scrub{flex:1}
+#fnum{color:#8b949e;white-space:nowrap;min-width:120px}
+#fnum b{color:#e6edf3}
+select{background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:4px;font:inherit;border-radius:4px}
+#err{color:#f85149;padding:20px;text-align:center}
+</style>
+</head>
+<body>
+<div id="hdr">
+  <h1>SKYSLINE FDS</h1>
+  <div class="meta">src <b id="m-src">—</b></div>
+  <div class="meta">frames <b id="m-n">0</b></div>
+  <div class="meta">fires <b id="m-fires">0</b></div>
+  <div class="meta">peak <b id="m-peak">—</b></div>
+  <div class="spacer"></div>
+  <div class="cfg">
+    <input id="in-report" placeholder="report.json url">
+    <input id="in-images" placeholder="images base url">
+    <button id="btn-load">Load</button>
+  </div>
+</div>
+
+<div id="main">
+  <div class="pane">
+    <div class="pane-title">Visible (ESP32-CAM)</div>
+    <div class="pane-body"><img id="cam" alt="cam"><span id="cam-msg">no image</span></div>
+  </div>
+  <div class="pane">
+    <div class="pane-title">Thermal (AMG8833 8×8)</div>
+    <div class="pane-body"><canvas id="thermal" width="512" height="512"></canvas></div>
+  </div>
+  <div id="stats">
+    <div class="grp">
+      <div class="row"><label>frame</label><span class="v" id="s-i">—</span></div>
+      <div class="row"><label>t (s)</label><span class="v" id="s-t">—</span></div>
+      <div class="row"><label>ts_ms</label><span class="v" id="s-ts">—</span></div>
+      <div class="row"><label>cam_file</label><span class="v" id="s-cam">—</span></div>
+    </div>
+    <div class="grp">
+      <div class="row"><label>IR min</label><span class="v" id="s-min">—</span></div>
+      <div class="row"><label>IR max</label><span class="v" id="s-max">—</span></div>
+      <div class="row"><label>IR avg</label><span class="v" id="s-avg">—</span></div>
+      <div class="row"><label>max grad</label><span class="v" id="s-grad">—</span></div>
+    </div>
+    <div class="grp">
+      <div class="row"><label>FIRE</label><span class="fire-flag off" id="s-fire">NO FIRE</span></div>
+      <div class="row"><label>fire px</label><span class="v" id="s-npx">0</span></div>
+      <div class="row" style="margin-top:6px"><label>FRS</label><span class="v" id="s-frs">—</span></div>
+      <div class="frs-bar"><div class="frs-fill" id="s-frsbar" style="width:0%"></div></div>
+      <div style="margin-top:8px"><span class="zone-badge" id="s-zone">—</span></div>
+    </div>
+    <div class="grp" id="gps-grp" style="display:none">
+      <div class="row"><label>lat</label><span class="v" id="s-lat">—</span></div>
+      <div class="row"><label>lon</label><span class="v" id="s-lon">—</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="tl"><canvas id="tlcanvas"></canvas></div>
+<div id="controls">
+  <button id="b-first">⏮</button>
+  <button id="b-prev">◀</button>
+  <button id="b-play">▶</button>
+  <button id="b-next">▶|</button>
+  <input id="scrub" type="range" min="0" max="0" value="0">
+  <span id="fnum">— / —</span>
+  <label style="color:#8b949e">spd
+    <select id="speed"><option value="500">0.5×</option><option value="200">1×</option>
+      <option value="100" selected>2×</option><option value="50">4×</option>
+      <option value="20">10×</option></select>
+  </label>
+</div>
+
+<script>
+// ── config / defaults (server-root-absolute paths; serve from FDS/) ──────────
+const qs = new URLSearchParams(location.search);
+const DEF_REPORT = qs.get('report') || '/data/maps/real/report.json';
+const DEF_IMAGES = qs.get('images') || '/data/raw/flight_real/';
+
+let DATA = null, cur = 0, playing = false, timer = null, imagesBase = DEF_IMAGES;
+
+const $ = id => document.getElementById(id);
+const tcv = $('thermal'), tctx = tcv.getContext('2d');
+const tl = $('tlcanvas'), tlx = tl.getContext('2d');
+
+// ── inferno-ish colormap for FRS / thermal ───────────────────────────────────
+function inferno(t){ // t in [0,1] -> [r,g,b]
+  t=Math.max(0,Math.min(1,t));
+  const stops=[[0,0,4],[40,11,84],[101,21,110],[159,42,99],[212,72,66],
+               [245,125,21],[250,193,39],[252,255,164]];
+  const x=t*(stops.length-1), i=Math.floor(x), f=x-i;
+  const a=stops[i], b=stops[Math.min(i+1,stops.length-1)];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+}
+
+// ── thermal heatmap: map grid temps over [Tmin,Tmax], outline fire pixels ────
+function drawThermal(fr){
+  const g=fr.grid, N=8, cell=tcv.width/N;
+  const lo=DATA.thresholds.t_min, hi=DATA.thresholds.t_max;
+  // autoscale to frame range for contrast, but never below global span
+  const fmin=Math.min(...g), fmax=Math.max(...g);
+  const a=Math.min(lo,fmin), b=Math.max(hi*0.4,fmax); // keep some absolute anchor
+  tctx.clearRect(0,0,tcv.width,tcv.height);
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    const v=g[r*N+c], t=(v-a)/(b-a||1), [R,G,B]=inferno(t);
+    tctx.fillStyle=`rgb(${R|0},${G|0},${B|0})`;
+    tctx.fillRect(c*cell,r*cell,cell+1,cell+1);
+  }
+  // temp labels
+  tctx.font=`${Math.floor(cell*0.22)}px monospace`;
+  tctx.textAlign='center';tctx.textBaseline='middle';
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    const v=g[r*N+c]; tctx.fillStyle='rgba(255,255,255,0.55)';
+    tctx.fillText(v.toFixed(0), c*cell+cell/2, r*cell+cell/2);
+  }
+  // fire pixel outlines
+  tctx.strokeStyle='#00e5ff';tctx.lineWidth=3;
+  (fr.fire_px||[]).forEach(idx=>{
+    const r=Math.floor(idx/N), c=idx%N;
+    tctx.strokeRect(c*cell+1.5,r*cell+1.5,cell-3,cell-3);
+  });
+}
+
+function zoneColor(name){
+  const z=DATA.zones.find(z=>z[2]===name); return z?z[3]:'#888';
+}
+
+function showFrame(i){
+  cur=Math.max(0,Math.min(DATA.frames.length-1,i));
+  const f=DATA.frames[cur];
+  drawThermal(f);
+  // cam image
+  const img=$('cam'), msg=$('cam-msg');
+  if(f.cam){ img.src=imagesBase+f.cam; img.classList.remove('missing');
+    img.onerror=()=>{img.style.display='none';msg.style.display='block';};
+    img.onload=()=>{img.style.display='';msg.style.display='none';}; }
+  else { img.style.display='none'; msg.style.display='block'; }
+  // stats
+  $('s-i').textContent=f.i; $('s-t').textContent=f.t_s.toFixed(2);
+  $('s-ts').textContent=f.ts; $('s-cam').textContent=f.cam||'—';
+  $('s-min').textContent=f.ir_min+'°C'; $('s-max').textContent=f.ir_max+'°C';
+  $('s-avg').textContent=f.ir_avg+'°C'; $('s-grad').textContent=f.max_grad;
+  const ff=$('s-fire');
+  if(f.fire){ff.textContent='🔥 FIRE';ff.className='fire-flag on';}
+  else{ff.textContent='NO FIRE';ff.className='fire-flag off';}
+  $('s-npx').textContent=f.n_fire;
+  $('s-frs').textContent=f.frs.toFixed(3);
+  const fb=$('s-frsbar'); fb.style.width=(f.frs*100)+'%';
+  const [R,G,B]=inferno(f.frs); fb.style.background=`rgb(${R|0},${G|0},${B|0})`;
+  const zb=$('s-zone'); zb.textContent=f.zone; zb.style.background=zoneColor(f.zone);
+  if(DATA.has_gps && f.lat!=null){ $('gps-grp').style.display='';
+    $('s-lat').textContent=f.lat; $('s-lon').textContent=f.lon; }
+  $('scrub').value=cur;
+  $('fnum').innerHTML=`<b>${cur+1}</b> / ${DATA.frames.length}`;
+  drawTimeline();
+}
+
+// ── timeline: IR max line + FRS dots + fire markers + 55°C line ──────────────
+function drawTimeline(){
+  const W=tl.clientWidth, H=tl.clientHeight, dpr=devicePixelRatio||1;
+  tl.width=W*dpr; tl.height=H*dpr; tlx.setTransform(dpr,0,0,dpr,0,0);
+  tlx.clearRect(0,0,W,H);
+  const F=DATA.frames, n=F.length, pad=4;
+  const irs=F.map(f=>f.ir_max), tmin=Math.min(...irs,20), tmax=Math.max(...irs,DATA.thresholds.fire_temp+5);
+  const X=i=>pad+(W-2*pad)*i/(n-1||1);
+  const Yt=v=>H-pad-(H-2*pad)*(v-tmin)/(tmax-tmin||1);
+  // 55°C threshold
+  tlx.strokeStyle='#DD1111';tlx.setLineDash([4,4]);tlx.beginPath();
+  tlx.moveTo(pad,Yt(DATA.thresholds.fire_temp));tlx.lineTo(W-pad,Yt(DATA.thresholds.fire_temp));
+  tlx.stroke();tlx.setLineDash([]);
+  // IR max line
+  tlx.strokeStyle='#8b949e';tlx.lineWidth=1;tlx.beginPath();
+  F.forEach((f,i)=>{const x=X(i),y=Yt(f.ir_max);i?tlx.lineTo(x,y):tlx.moveTo(x,y);});tlx.stroke();
+  // FRS dots
+  F.forEach((f,i)=>{const [R,G,B]=inferno(f.frs);
+    tlx.fillStyle=`rgb(${R|0},${G|0},${B|0})`;
+    tlx.beginPath();tlx.arc(X(i),H-pad-(H-2*pad)*f.frs,2.2,0,7);tlx.fill();});
+  // fire markers
+  tlx.strokeStyle='#00e5ff';tlx.lineWidth=1.4;
+  F.forEach((f,i)=>{if(f.fire){tlx.beginPath();tlx.arc(X(i),H-pad-(H-2*pad)*f.frs,5,0,7);tlx.stroke();}});
+  // cursor
+  tlx.strokeStyle='#58a6ff';tlx.lineWidth=1.5;tlx.beginPath();
+  tlx.moveTo(X(cur),0);tlx.lineTo(X(cur),H);tlx.stroke();
+}
+tl.addEventListener('click',e=>{
+  const r=tl.getBoundingClientRect(), n=DATA.frames.length;
+  showFrame(Math.round((e.clientX-r.left)/r.width*(n-1)));
+});
+
+// ── playback ──────────────────────────────────────────────────────────────────
+function play(){ if(playing)return; playing=true; $('b-play').textContent='⏸';
+  const step=()=>{ if(!playing)return;
+    if(cur>=DATA.frames.length-1){stop();return;}
+    showFrame(cur+1); timer=setTimeout(step,+$('speed').value); };
+  timer=setTimeout(step,+$('speed').value);
+}
+function stop(){ playing=false; clearTimeout(timer); $('b-play').textContent='▶'; }
+$('b-play').onclick=()=>playing?stop():play();
+$('b-first').onclick=()=>{stop();showFrame(0);};
+$('b-prev').onclick=()=>{stop();showFrame(cur-1);};
+$('b-next').onclick=()=>{stop();showFrame(cur+1);};
+$('scrub').oninput=e=>{stop();showFrame(+e.target.value);};
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft'){stop();showFrame(cur-1);}
+  if(e.key==='ArrowRight'){stop();showFrame(cur+1);}
+  if(e.key===' '){e.preventDefault();playing?stop():play();}
+});
+
+// ── load ──────────────────────────────────────────────────────────────────────
+async function load(reportUrl,imgBase){
+  stop();
+  try{
+    const res=await fetch(reportUrl); if(!res.ok)throw new Error(res.status);
+    DATA=await res.json();
+  }catch(err){ document.body.innerHTML=`<div id="err">failed to load ${reportUrl}<br>${err}
+    <br><br>serve FDS/ root: <code>python -m http.server</code> then open /viewer/</div>`; return; }
+  imagesBase=imgBase.endsWith('/')?imgBase:imgBase+'/';
+  const fires=DATA.frames.filter(f=>f.fire).length;
+  const peak=DATA.frames.reduce((a,b)=>b.frs>a.frs?b:a,DATA.frames[0]);
+  $('m-src').textContent=DATA.source; $('m-n').textContent=DATA.n_frames;
+  $('m-fires').textContent=fires;
+  $('m-peak').textContent=`FRS ${peak.frs.toFixed(3)} (${peak.zone})`;
+  $('scrub').max=DATA.frames.length-1;
+  showFrame(0);
+}
+$('btn-load').onclick=()=>load($('in-report').value||DEF_REPORT,$('in-images').value||DEF_IMAGES);
+$('in-report').value=DEF_REPORT; $('in-images').value=DEF_IMAGES;
+window.addEventListener('resize',()=>DATA&&drawTimeline());
+load(DEF_REPORT,DEF_IMAGES);
+</script>
+</body>
+</html>

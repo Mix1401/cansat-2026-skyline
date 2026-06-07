@@ -26,6 +26,22 @@ firmware/.piolibdeps/
 *.log
 *.csv
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Claude Code local settings
+.claude/settings.local.json
+CLAUDE.md
+
 # Editor
 .vscode/
 *.swp
